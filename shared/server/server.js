@@ -23,13 +23,34 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: ['http://localhost:5174', 'http://localhost:5173', 'http://localhost:3000'],
+  credentials: true
+}));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static files
+// Serve static files - FIXED: Serve from the correct uploads directory
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/uploads/logos', express.static(path.join(__dirname, 'uploads', 'logos')));
+app.use('/uploads/images', express.static(path.join(__dirname, 'uploads', 'images')));
+
+// Create uploads directories if they don't exist
+import { mkdirSync } from 'fs';
+const uploadDirs = [
+  path.join(__dirname, 'uploads'),
+  path.join(__dirname, 'uploads', 'logos'),
+  path.join(__dirname, 'uploads', 'images')
+];
+
+uploadDirs.forEach(dir => {
+  try {
+    mkdirSync(dir, { recursive: true });
+    console.log(`✅ Created directory: ${dir}`);
+  } catch (error) {
+    console.log(`⚠️ Directory already exists: ${dir}`);
+  }
+});
 
 // Routes
 app.use('/api/articles', articleRoutes);
@@ -51,11 +72,9 @@ try {
   // Create a simple categories fallback route
   app.use('/api/categories', (req, res, next) => {
     if (req.method === 'GET' && req.path === '/all') {
-      // Fallback: return empty array or get categories from articles
       return res.json([]);
     }
     if (req.method === 'POST' && req.path === '/create') {
-      // Fallback: return a temporary category object
       return res.json({ 
         _id: `temp-${Date.now()}`, 
         name: req.body.name 
@@ -65,44 +84,14 @@ try {
   });
 }
 
-// Website Settings Routes (Add these new routes)
-app.use('/api/website-settings', async (req, res, next) => {
-  try {
-    const websiteSettingsRoutes = await import('./routes/websiteSettings.js');
-    return websiteSettingsRoutes.default(req, res, next);
-  } catch (error) {
-    console.log('⚠️ Website settings routes not found, using fallback');
-    // Fallback routes for website settings
-    if (req.method === 'PUT' && req.path === '/logo') {
-      return res.json({ 
-        message: 'Logo upload functionality not available',
-        logoUrl: '/uploads/logos/default-logo.png'
-      });
-    }
-    if (req.method === 'PUT' && req.path === '/theme') {
-      return res.json({ 
-        message: 'Theme update functionality not available',
-        theme: req.body.theme || '#000000'
-      });
-    }
-    if (req.method === 'POST' && req.path === '/category') {
-      return res.json({ 
-        _id: `temp-cat-${Date.now()}`,
-        name: req.body.name,
-        websiteId: req.body.websiteId
-      });
-    }
-    next();
-  }
-});
-
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     message: 'LeleDumbo API is running',
     timestamp: new Date().toISOString(),
-    categoriesRoutes: categoriesRoutesLoaded ? 'loaded' : 'fallback'
+    categoriesRoutes: categoriesRoutesLoaded ? 'loaded' : 'fallback',
+    uploadsPath: path.join(__dirname, 'uploads')
   });
 });
 
@@ -159,4 +148,6 @@ app.listen(PORT, () => {
   console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🗄️  Database: ${MONGODB_URI}`);
   console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
+  console.log(`📁 Uploads directory: ${path.join(__dirname, 'uploads')}`);
+  console.log(`🌐 Uploads available at: http://localhost:${PORT}/uploads/`);
 });

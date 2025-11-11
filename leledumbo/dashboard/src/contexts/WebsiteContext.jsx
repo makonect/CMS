@@ -33,11 +33,13 @@ export const WebsiteProvider = ({ children }) => {
   const fetchWebsites = async () => {
     try {
       setLoading(true);
+      console.log('Fetching websites from /api/websites...');
       const response = await fetch('/api/websites');
+      
       if (response.ok) {
         const data = await response.json();
-        setWebsites(data);
         console.log('Websites loaded:', data);
+        setWebsites(data);
       } else {
         console.error('Failed to fetch websites:', response.status);
         setWebsites([]);
@@ -54,9 +56,8 @@ export const WebsiteProvider = ({ children }) => {
     const website = websites.find(w => w.name === websiteName);
     if (website) {
       setCurrentWebsite(website);
-      // Save to localStorage to persist selection
       localStorage.setItem('selectedWebsite', websiteName);
-      console.log('Website changed to:', websiteName);
+      console.log('Website changed to:', websiteName, website);
     }
   };
 

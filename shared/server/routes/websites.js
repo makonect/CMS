@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { mkdirSync, existsSync } from 'fs';
 import Website from '../models/Website.js';
 import Category from '../models/Category.js';
 
@@ -13,7 +14,10 @@ const router = express.Router();
 // Configure multer for logo uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, path.join(__dirname, '../uploads/logos'));
+    // Create uploads directory if it doesn't exist
+    const uploadDir = path.join(__dirname, '../uploads/logos');
+    mkdirSync(uploadDir, { recursive: true });
+    cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -35,18 +39,18 @@ const upload = multer({
   }
 });
 
-// GET ALL WEBSITES - This is the missing endpoint that fixes your dropdown
+// GET ALL WEBSITES
 router.get('/', async (req, res) => {
   try {
     const websites = await Website.find().sort({ createdAt: -1 });
     
-    // Transform data to match frontend expectations
+    // Transform data to include full logo URLs
     const transformedWebsites = websites.map(website => ({
       _id: website._id,
       name: website.name,
-      domain: website.url, // Map url to domain for frontend
+      domain: website.url,
       description: website.description,
-      logo: website.logo,
+      logo: website.logo ? `http://localhost:3001${website.logo}` : null,
       themeColor: website.themeColor,
       createdAt: website.createdAt,
       updatedAt: website.updatedAt
@@ -73,13 +77,12 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Website not found' });
     }
 
-    // Transform data to match frontend expectations
     const transformedWebsite = {
       _id: website._id,
       name: website.name,
-      domain: website.url, // Map url to domain for frontend
+      domain: website.url,
       description: website.description,
-      logo: website.logo,
+      logo: website.logo ? `http://localhost:3001${website.logo}` : null,
       themeColor: website.themeColor,
       createdAt: website.createdAt,
       updatedAt: website.updatedAt
@@ -106,26 +109,24 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Create new website - using domain as url
     const newWebsite = new Website({
       name,
-      url: domain, // Store domain as url in database
+      url: domain,
       description: description || '',
       themeColor: themeColor || '#000000',
-      userId: 'default-user-id', // You might want to update this with actual user auth
+      userId: 'default-user-id',
       createdAt: new Date(),
       updatedAt: new Date()
     });
 
     const savedWebsite = await newWebsite.save();
 
-    // Transform response for frontend
     const transformedWebsite = {
       _id: savedWebsite._id,
       name: savedWebsite.name,
-      domain: savedWebsite.url, // Map url back to domain for frontend
+      domain: savedWebsite.url,
       description: savedWebsite.description,
-      logo: savedWebsite.logo,
+      logo: savedWebsite.logo ? `http://localhost:3001${savedWebsite.logo}` : null,
       themeColor: savedWebsite.themeColor,
       createdAt: savedWebsite.createdAt,
       updatedAt: savedWebsite.updatedAt
@@ -154,7 +155,7 @@ router.put('/:id', async (req, res) => {
       id,
       { 
         name,
-        url: domain, // Update url with domain
+        url: domain,
         description,
         themeColor,
         updatedAt: new Date()
@@ -166,13 +167,12 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Website not found' });
     }
 
-    // Transform response for frontend
     const transformedWebsite = {
       _id: updatedWebsite._id,
       name: updatedWebsite.name,
-      domain: updatedWebsite.url, // Map url back to domain
+      domain: updatedWebsite.url,
       description: updatedWebsite.description,
-      logo: updatedWebsite.logo,
+      logo: updatedWebsite.logo ? `http://localhost:3001${updatedWebsite.logo}` : null,
       themeColor: updatedWebsite.themeColor,
       createdAt: updatedWebsite.createdAt,
       updatedAt: updatedWebsite.updatedAt
@@ -215,32 +215,31 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// Upload logo for website - FIXED VERSION
-router.put('/logo', upload.single('logo'), async (req, res) => {
+// Upload logo for website
+router.put('/:id/logo', upload.single('logo'), async (req, res) => {
   try {
-    console.log('Logo upload request received:', req.body);
-    console.log('Uploaded file:', req.file);
-
-    const { websiteId } = req.body;
+    const { id } = req.params;
     
-    if (!websiteId) {
-      return res.status(400).json({ error: 'Website ID is required' });
-    }
+    console.log('Logo upload request for website:', id);
 
     if (!req.file) {
       return res.status(400).json({ error: 'No logo file uploaded' });
     }
 
-    // Fix the logo URL path - make sure it's accessible from frontend
     const logoUrl = `/uploads/logos/${req.file.filename}`;
+    const fullLogoUrl = `http://localhost:3001${logoUrl}`;
     
-    console.log('Updating website with logo URL:', logoUrl);
+    // Check if file actually exists
+    const filePath = path.join(__dirname, '../uploads/logos', req.file.filename);
+    console.log('File saved at:', filePath);
+    console.log('File exists:', existsSync(filePath));
+    
+    console.log('Updating website with logo URL:', fullLogoUrl);
 
-    // Update website with new logo - FIXED: Use correct field names
     const updatedWebsite = await Website.findByIdAndUpdate(
-      websiteId,
+      id,
       { 
-        logo: logoUrl,
+        logo: logoUrl, // Store relative path in database
         updatedAt: new Date()
       },
       { new: true }
@@ -254,41 +253,37 @@ router.put('/logo', upload.single('logo'), async (req, res) => {
 
     res.json({
       message: 'Logo uploaded successfully',
-      logoUrl: logoUrl,
-      website: updatedWebsite
+      logoUrl: fullLogoUrl, // Return full URL to frontend
+      website: {
+        ...updatedWebsite.toObject(),
+        logo: fullLogoUrl // Return website with full URL
+      }
     });
   } catch (error) {
     console.error('Logo upload error:', error);
     res.status(500).json({ 
       error: 'Failed to upload logo',
-      message: error.message,
-      details: 'Check if uploads directory exists and has write permissions'
+      message: error.message
     });
   }
 });
 
-// Update theme color for website - FIXED VERSION
-router.put('/theme', async (req, res) => {
+// Update theme color for website
+router.put('/:id/theme', async (req, res) => {
   try {
-    const { websiteId, themeColor } = req.body;
+    const { id } = req.params;
+    const { themeColor } = req.body;
     
-    console.log('Theme update request:', { websiteId, themeColor });
+    console.log('Theme update request for website:', id, themeColor);
     
-    if (!websiteId || !themeColor) {
+    if (!themeColor) {
       return res.status(400).json({ 
-        error: 'Website ID and theme color are required' 
-      });
-    }
-
-    // Validate themeColor format
-    if (!isValidColor(themeColor)) {
-      return res.status(400).json({ 
-        error: 'Invalid theme color format. Use hex format (#RRGGBB)' 
+        error: 'Theme color is required' 
       });
     }
 
     const updatedWebsite = await Website.findByIdAndUpdate(
-      websiteId,
+      id,
       { 
         themeColor: themeColor,
         updatedAt: new Date()
@@ -316,85 +311,27 @@ router.put('/theme', async (req, res) => {
   }
 });
 
-// Helper function to validate color format
-function isValidColor(color) {
-  // Support both single color and gradient format
-  if (typeof color !== 'string') return false;
-  
-  // Check if it's a single hex color
-  if (color.startsWith('#') && (color.length === 4 || color.length === 7)) {
-    return /^#([0-9A-F]{3}){1,2}$/i.test(color);
-  }
-  
-  // Check if it's a gradient format (we'll handle this in frontend)
-  if (color.includes(',')) {
-    const colors = color.split(',');
-    return colors.every(c => isValidColor(c.trim()));
-  }
-  
-  return false;
-}
-
-// Update theme color for website
-router.put('/theme', async (req, res) => {
-  try {
-    const { websiteId, themeColor } = req.body;
-    
-    if (!websiteId || !themeColor) {
-      return res.status(400).json({ 
-        error: 'Website ID and theme color are required' 
-      });
-    }
-
-    const updatedWebsite = await Website.findByIdAndUpdate(
-      websiteId,
-      { 
-        themeColor: themeColor,
-        updatedAt: new Date()
-      },
-      { new: true }
-    );
-
-    if (!updatedWebsite) {
-      return res.status(404).json({ error: 'Website not found' });
-    }
-
-    res.json({
-      message: 'Theme color updated successfully',
-      themeColor: themeColor,
-      website: updatedWebsite
-    });
-  } catch (error) {
-    console.error('Theme update error:', error);
-    res.status(500).json({ 
-      error: 'Failed to update theme color',
-      message: error.message 
-    });
-  }
-});
-
 // Add category to website
-router.post('/category', async (req, res) => {
+router.post('/:id/category', async (req, res) => {
   try {
-    const { websiteId, name, description } = req.body;
+    const { id } = req.params;
+    const { name, description } = req.body;
     
-    if (!websiteId || !name) {
+    if (!name) {
       return res.status(400).json({ 
-        error: 'Website ID and category name are required' 
+        error: 'Category name is required' 
       });
     }
 
-    // Check if website exists
-    const website = await Website.findById(websiteId);
+    const website = await Website.findById(id);
     if (!website) {
       return res.status(404).json({ error: 'Website not found' });
     }
 
-    // Create new category
     const newCategory = new Category({
       name,
       description: description || '',
-      websiteId,
+      websiteId: id,
       createdAt: new Date(),
       updatedAt: new Date()
     });
@@ -415,11 +352,11 @@ router.post('/category', async (req, res) => {
 });
 
 // Get categories for website
-router.get('/categories/:websiteId', async (req, res) => {
+router.get('/:id/categories', async (req, res) => {
   try {
-    const { websiteId } = req.params;
+    const { id } = req.params;
     
-    const categories = await Category.find({ websiteId }).sort({ createdAt: -1 });
+    const categories = await Category.find({ websiteId: id }).sort({ createdAt: -1 });
     
     res.json({
       categories: categories
@@ -452,32 +389,6 @@ router.delete('/category/:categoryId', async (req, res) => {
     console.error('Category deletion error:', error);
     res.status(500).json({ 
       error: 'Failed to delete category',
-      message: error.message 
-    });
-  }
-});
-
-// Get website settings
-router.get('/:websiteId/settings', async (req, res) => {
-  try {
-    const { websiteId } = req.params;
-    
-    const website = await Website.findById(websiteId);
-    
-    if (!website) {
-      return res.status(404).json({ error: 'Website not found' });
-    }
-
-    const categories = await Category.find({ websiteId }).sort({ createdAt: -1 });
-
-    res.json({
-      website: website,
-      categories: categories
-    });
-  } catch (error) {
-    console.error('Get website settings error:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch website settings',
       message: error.message 
     });
   }

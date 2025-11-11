@@ -32,6 +32,19 @@ const Header = () => {
             <p className="text-sm text-gray-600">
               {currentWebsite?.domain || 'Content Management System'}
             </p>
+            {currentWebsite?.themeColor && (
+              <div className="flex items-center space-x-1 mt-1">
+                <div 
+                  className="w-3 h-3 rounded-full border border-gray-300"
+                  style={{ 
+                    background: currentWebsite.themeColor.includes(',') 
+                      ? `linear-gradient(135deg, ${currentWebsite.themeColor})`
+                      : currentWebsite.themeColor
+                  }}
+                ></div>
+                <span className="text-xs text-gray-500">Theme</span>
+              </div>
+            )}
           </div>
         </div>
         

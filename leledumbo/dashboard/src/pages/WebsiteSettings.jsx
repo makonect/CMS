@@ -19,13 +19,14 @@ const WebsiteSettings = () => {
   // Load website settings when currentWebsite changes
   useEffect(() => {
     if (currentWebsite) {
+      console.log('Current website loaded:', currentWebsite);
       // Parse theme colors from stored format "primaryColor,secondaryColor"
       if (currentWebsite.themeColor && currentWebsite.themeColor.includes(',')) {
         const [primary, secondary] = currentWebsite.themeColor.split(',');
         setThemeColors({ primary: primary.trim(), secondary: secondary.trim() });
         setTempThemeColors({ primary: primary.trim(), secondary: secondary.trim() });
       } else {
-        // Default to single color or fallback
+        // Default colors
         const defaultColors = { primary: '#000000', secondary: '#ffffff' };
         setThemeColors(defaultColors);
         setTempThemeColors(defaultColors);
@@ -38,10 +39,12 @@ const WebsiteSettings = () => {
     if (!currentWebsite) return;
     
     try {
-      const response = await fetch(`/api/websites/categories/${currentWebsite._id}`);
+      const response = await fetch(`/api/websites/${currentWebsite._id}/categories`);
       if (response.ok) {
         const data = await response.json();
         setCategories(data.categories || []);
+      } else {
+        console.error('Failed to fetch categories');
       }
     } catch (error) {
       console.error('Error fetching categories:', error);
@@ -116,37 +119,34 @@ const WebsiteSettings = () => {
       return;
     }
 
-    // Recommended logo dimensions
-    const recommendedDimensions = 'Recommended: 200x200px to 400x400px (Square)';
-
     try {
       setLogoUploading(true);
       const formData = new FormData();
       formData.append('logo', file);
-      formData.append('websiteId', currentWebsite._id);
 
-      console.log('Uploading logo...', { websiteId: currentWebsite._id, file: file.name });
+      console.log('Uploading logo for website:', currentWebsite._id);
 
-      const response = await fetch('/api/websites/logo', {
+      const response = await fetch(`/api/websites/${currentWebsite._id}/logo`, {
         method: 'PUT',
         body: formData,
       });
 
       if (response.ok) {
         const data = await response.json();
-        alert(`Logo uploaded successfully!\n${recommendedDimensions}`);
-        refreshWebsites(); // Refresh to get updated website data
+        console.log('Logo upload successful:', data);
+        alert('Logo uploaded successfully!');
+        refreshWebsites();
       } else {
         const errorData = await response.json();
         console.error('Logo upload failed:', errorData);
-        alert(`Failed to upload logo: ${errorData.error || 'Unknown error'}\n\n${recommendedDimensions}`);
+        alert(`Failed to upload logo: ${errorData.error || 'Unknown error'}`);
       }
     } catch (error) {
       console.error('Error uploading logo:', error);
-      alert(`Error uploading logo: Network error\n\n${recommendedDimensions}`);
+      alert(`Network error uploading logo: ${error.message}`);
     } finally {
       setLogoUploading(false);
-      event.target.value = ''; // Reset file input
+      event.target.value = '';
     }
   };
 
@@ -158,11 +158,9 @@ const WebsiteSettings = () => {
   };
 
   const handleCustomColorInput = (colorType, color) => {
-    // Add # if missing
     if (!color.startsWith('#')) {
       color = '#' + color;
     }
-    // Validate hex color format
     if (/^#([0-9A-F]{3}){1,2}$/i.test(color)) {
       handleThemeColorChange(colorType, color);
     }
@@ -174,25 +172,25 @@ const WebsiteSettings = () => {
     try {
       setThemeSaving(true);
       
-      // Combine colors into single string for storage: "primaryColor,secondaryColor"
       const themeColorString = `${tempThemeColors.primary},${tempThemeColors.secondary}`;
       
-      console.log('Saving theme colors:', themeColorString);
+      console.log('Saving theme colors for website:', currentWebsite._id, themeColorString);
 
-      const response = await fetch('/api/websites/theme', {
+      const response = await fetch(`/api/websites/${currentWebsite._id}/theme`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          websiteId: currentWebsite._id,
           themeColor: themeColorString,
         }),
       });
 
       if (response.ok) {
+        const data = await response.json();
+        console.log('Theme save successful:', data);
         setThemeColors(tempThemeColors);
-        refreshWebsites(); // Refresh to get updated website data
+        refreshWebsites();
         alert('Theme colors saved successfully!');
       } else {
         const errorData = await response.json();
@@ -201,7 +199,7 @@ const WebsiteSettings = () => {
       }
     } catch (error) {
       console.error('Error saving theme colors:', error);
-      alert('Error saving theme colors: Network error');
+      alert(`Network error saving theme: ${error.message}`);
     } finally {
       setThemeSaving(false);
     }
@@ -213,13 +211,12 @@ const WebsiteSettings = () => {
 
     try {
       setCategoryLoading(true);
-      const response = await fetch('/api/websites/category', {
+      const response = await fetch(`/api/websites/${currentWebsite._id}/category`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          websiteId: currentWebsite._id,
           name: newCategory.name,
           description: newCategory.description,
         }),
@@ -227,7 +224,7 @@ const WebsiteSettings = () => {
 
       if (response.ok) {
         setNewCategory({ name: '', description: '' });
-        fetchCategories(); // Refresh categories list
+        fetchCategories();
         alert('Category added successfully!');
       } else {
         const errorData = await response.json();
@@ -250,7 +247,7 @@ const WebsiteSettings = () => {
       });
 
       if (response.ok) {
-        fetchCategories(); // Refresh categories list
+        fetchCategories();
         alert('Category deleted successfully!');
       } else {
         const errorData = await response.json();
@@ -262,12 +259,10 @@ const WebsiteSettings = () => {
     }
   };
 
-  // Check if theme colors have changed
   const hasThemeChanges = 
     tempThemeColors.primary !== themeColors.primary || 
     tempThemeColors.secondary !== themeColors.secondary;
 
-  // Popular gradient combinations
   const popularGradients = [
     { primary: '#1e40af', secondary: '#60a5fa', name: 'Blue Gradient' },
     { primary: '#16a34a', secondary: '#4ade80', name: 'Green Gradient' },
@@ -337,40 +332,38 @@ const WebsiteSettings = () => {
               <h3 className="text-lg font-medium text-gray-800">Website Logo</h3>
               <div className="flex items-center space-x-4">
                 <div className="w-24 h-24 bg-gray-200 rounded-lg flex items-center justify-center overflow-hidden border-2 border-gray-300">
-                  {currentWebsite.logo && currentWebsite.logo !== '/uploads/logos/default-logo.png' ? (
+                  {currentWebsite.logo ? (
                     <img 
-                      src={currentWebsite.logo} 
+                      src={currentWebsite.logo}
                       alt={`${currentWebsite.name} logo`}
                       className="w-full h-full object-cover"
                       onError={(e) => {
+                        console.error('Logo failed to load:', currentWebsite.logo);
                         e.target.style.display = 'none';
-                        e.target.nextSibling.style.display = 'block';
                       }}
+                      onLoad={() => console.log('Logo loaded successfully:', currentWebsite.logo)}
                     />
-                  ) : null}
-                  <span className={`text-gray-500 text-sm ${currentWebsite.logo && currentWebsite.logo !== '/uploads/logos/default-logo.png' ? 'hidden' : 'block'}`}>
-                    No logo
-                  </span>
+                  ) : (
+                    <span className="text-gray-500 text-sm">No logo</span>
+                  )}
                 </div>
+                
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Upload Logo
                   </label>
                   <input
                     type="file"
-                    accept="image/jpeg, image/jpg, image/png, image/gif, image/webp"
+                    accept="image/*"
                     onChange={handleLogoUpload}
                     disabled={logoUploading}
-                    className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-50"
+                    className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
                   />
                   <p className="text-xs text-gray-500 mt-1">
                     PNG, JPG, GIF, WebP up to 5MB
                   </p>
-                  <p className="text-xs text-blue-600 mt-1 font-medium">
-                    Recommended: 200x200px to 400x400px (Square)
-                  </p>
                   {logoUploading && (
-                    <p className="text-sm text-blue-600 mt-2">Uploading logo...</p>
+                    <p className="text-sm text-blue-600 mt-1">Uploading logo...</p>
                   )}
                 </div>
               </div>
@@ -563,20 +556,24 @@ const WebsiteSettings = () => {
               }`}
             >
               <div className="flex items-center space-x-3 mb-2">
-                {website.logo && website.logo !== '/uploads/logos/default-logo.png' ? (
+                {website.logo ? (
                   <img 
-                    src={website.logo} 
+                    src={website.logo}
                     alt={`${website.name} logo`}
                     className="w-8 h-8 object-cover rounded"
+                    onError={(e) => {
+                      console.error('Website list logo failed to load:', website.logo);
+                      e.target.style.display = 'none';
+                    }}
                   />
                 ) : (
                   <div className="w-8 h-8 bg-gray-200 rounded flex items-center justify-center">
                     <span className="text-gray-500 text-xs">🌐</span>
                   </div>
                 )}
-                <div>
-                  <h3 className="font-semibold text-lg">{website.name}</h3>
-                  <p className="text-sm text-gray-600">{website.domain}</p>
+                <div className="flex-1">
+                  <h3 className="font-semibold text-gray-800">{website.name}</h3>
+                  <p className="text-xs text-gray-500">{website.domain}</p>
                 </div>
               </div>
               <p className="text-xs text-gray-500">
