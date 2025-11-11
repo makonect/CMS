@@ -60,6 +60,10 @@ app.use('/api/contact', contactRoutes);
 app.use('/api/traffic', trafficRoutes);
 app.use('/api/websites', websiteRoutes);
 
+// Add upload error handling (import this from uploadController)
+import { handleUploadError } from './controllers/uploadController.js';
+app.use('/api/upload', handleUploadError);
+
 // Categories routes with conditional loading
 let categoriesRoutesLoaded = false;
 try {

@@ -3,8 +3,10 @@ import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import axios from 'axios';
 import AIGenerator from '../AI/AIGenerator';
+import { useWebsite } from '../../contexts/WebsiteContext';
 
 const ArticleForm = ({ onSubmit, loading, initialData }) => {
+  const { currentWebsite } = useWebsite();
   const [formData, setFormData] = useState(initialData || {
     title: '',
     content: '',
@@ -12,7 +14,7 @@ const ArticleForm = ({ onSubmit, loading, initialData }) => {
     featuredImage: '',
     status: 'draft',
     isFeatured: false,
-    website: 'leledumbo'
+    website: currentWebsite?.name || 'leledumbo'
   });
 
   const [existingCategories, setExistingCategories] = useState([]);
@@ -21,26 +23,40 @@ const ArticleForm = ({ onSubmit, loading, initialData }) => {
   const fileInputRef = useRef(null);
   const editorRef = useRef(null);
 
-  // Simple Quill editor modules (reduced to avoid issues)
+  // Enhanced Quill editor modules with proper image handling
   const modules = {
-    toolbar: [
-      [{ 'header': [1, 2, 3, false] }],
-      ['bold', 'italic', 'underline'],
-      [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-      ['link', 'image'],
-      ['clean']
-    ],
+    toolbar: {
+      container: [
+        [{ 'header': [1, 2, 3, false] }],
+        ['bold', 'italic', 'underline', 'strike'],
+        [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+        ['blockquote', 'code-block'],
+        ['link', 'image'],
+        [{ 'align': [] }],
+        [{ 'color': [] }, { 'background': [] }],
+        ['clean']
+      ],
+      handlers: {
+        image: imageHandler
+      }
+    },
+    clipboard: {
+      matchVisual: false,
+    }
   };
 
   const formats = [
     'header',
-    'bold', 'italic', 'underline',
+    'bold', 'italic', 'underline', 'strike',
     'list', 'bullet',
-    'link', 'image'
+    'blockquote', 'code-block',
+    'link', 'image',
+    'align',
+    'color', 'background'
   ];
 
-  // Simple image handler
-  const imageHandler = () => {
+  // Image handler for Quill editor
+  function imageHandler() {
     const input = document.createElement('input');
     input.setAttribute('type', 'file');
     input.setAttribute('accept', 'image/*');
@@ -52,7 +68,7 @@ const ArticleForm = ({ onSubmit, loading, initialData }) => {
         await uploadImageToEditor(file);
       }
     };
-  };
+  }
 
   const uploadImageToEditor = async (file) => {
     if (!file.type.match('image.*')) {
@@ -77,9 +93,15 @@ const ArticleForm = ({ onSubmit, loading, initialData }) => {
       });
 
       if (response.data.success) {
+        const imageUrl = response.data.images.original;
+        // Fix the URL if it's relative
+        const fullImageUrl = imageUrl.startsWith('http') ? imageUrl : `http://localhost:3001${imageUrl}`;
+        
         const quill = editorRef.current?.getEditor();
         const range = quill?.getSelection();
-        quill?.insertEmbed(range?.index || 0, 'image', response.data.images.original);
+        if (range) {
+          quill.insertEmbed(range.index, 'image', fullImageUrl);
+        }
       }
     } catch (error) {
       console.error('Error uploading image:', error);
@@ -89,65 +111,57 @@ const ArticleForm = ({ onSubmit, loading, initialData }) => {
     }
   };
 
+  // Update form data when currentWebsite changes
   useEffect(() => {
-    fetchExistingCategories();
-  }, [formData.website]);
+    if (currentWebsite) {
+      setFormData(prev => ({
+        ...prev,
+        website: currentWebsite.name
+      }));
+      fetchExistingCategories();
+    }
+  }, [currentWebsite]);
 
-  // Fetch all categories for the current website
-  // Fetch all categories for the current website
-const fetchExistingCategories = async () => {
-  setCategoryLoading(true);
-  try {
-    const token = localStorage.getItem('token');
+  // Fetch categories for the current website
+  const fetchExistingCategories = async () => {
+    if (!currentWebsite) return;
     
-    // First, get the website ID based on the website name
-    const websitesResponse = await axios.get('/api/websites');
-    const currentWebsite = websitesResponse.data.find(w => w.name === formData.website);
-    
-    if (!currentWebsite) {
-      console.error('❌ Website not found:', formData.website);
-      const fallbackCategories = getDefaultCategories(formData.website);
-      setExistingCategories(fallbackCategories);
-      return;
-    }
-    
-    console.log('🔄 Fetching categories for website ID:', currentWebsite.name);
-    
-    const response = await axios.get(`/api/categories/website/${currentWebsite._id}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`
+    setCategoryLoading(true);
+    try {
+      console.log('🔄 Fetching categories for website:', currentWebsite.name);
+      
+      // Use the websites API to get categories for the current website
+      const response = await axios.get(`/api/websites/${currentWebsite._id}/categories`);
+      
+      console.log('📦 Categories API Response:', {
+        status: response.status,
+        data: response.data,
+        count: response.data?.categories?.length || 0
+      });
+      
+      if (response.data && response.data.categories && Array.isArray(response.data.categories)) {
+        console.log('✅ Setting categories:', response.data.categories.length);
+        setExistingCategories(response.data.categories);
+      } else {
+        console.error('❌ Unexpected response format:', response.data);
+        const fallbackCategories = getDefaultCategories(currentWebsite.name);
+        console.log('🔄 Using fallback categories:', fallbackCategories);
+        setExistingCategories(fallbackCategories);
       }
-    });
-    
-    console.log('📦 Categories API Response:', {
-      status: response.status,
-      data: response.data,
-      count: response.data?.length || 0
-    });
-    
-    if (response.data && Array.isArray(response.data)) {
-      console.log('✅ Setting categories:', response.data.length);
-      setExistingCategories(response.data);
-    } else {
-      console.error('❌ Unexpected response format:', response.data);
-      const fallbackCategories = getDefaultCategories(formData.website);
-      console.log('🔄 Using fallback categories:', fallbackCategories);
+    } catch (error) {
+      console.error('💥 Error fetching categories from API:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      
+      const fallbackCategories = getDefaultCategories(currentWebsite.name);
+      console.log('🔄 Using error fallback categories:', fallbackCategories);
       setExistingCategories(fallbackCategories);
+    } finally {
+      setCategoryLoading(false);
     }
-  } catch (error) {
-    console.error('💥 Error fetching categories from API:', {
-      message: error.message,
-      response: error.response?.data,
-      status: error.response?.status
-    });
-    
-    const fallbackCategories = getDefaultCategories(formData.website);
-    console.log('🔄 Using error fallback categories:', fallbackCategories);
-    setExistingCategories(fallbackCategories);
-  } finally {
-    setCategoryLoading(false);
-  }
-};
+  };
 
   // Default categories fallback
   const getDefaultCategories = (website) => {
@@ -226,9 +240,15 @@ const fetchExistingCategories = async () => {
       });
 
       if (response.data.success) {
+        let imageUrl = response.data.images.original;
+        // Fix the URL if it's relative - prepend backend URL
+        if (!imageUrl.startsWith('http')) {
+          imageUrl = `http://localhost:3001${imageUrl}`;
+        }
+        
         setFormData(prev => ({
           ...prev,
-          featuredImage: response.data.images.original
+          featuredImage: imageUrl
         }));
       }
     } catch (error) {
@@ -236,6 +256,10 @@ const fetchExistingCategories = async () => {
       alert('Error uploading image. Please try again.');
     } finally {
       setUploading(false);
+      // Reset the file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
@@ -249,7 +273,7 @@ const fetchExistingCategories = async () => {
     }
     
     const cleanContent = formData.content.replace(/<p><br><\/p>/g, '').trim();
-    if (!cleanContent) {
+    if (!cleanContent || cleanContent === '<p></p>') {
       alert('Please enter article content');
       return;
     }
@@ -259,7 +283,7 @@ const fetchExistingCategories = async () => {
       return;
     }
     
-    // Submit the form data
+    // Submit the form data - featuredImage is optional
     onSubmit(formData);
   };
 
@@ -274,21 +298,57 @@ const fetchExistingCategories = async () => {
     return category ? category.name : 'Unknown Category';
   };
 
+  // Add a new category on the fly
+  const handleAddNewCategory = async (categoryName) => {
+    if (!categoryName.trim() || !currentWebsite) return;
+    
+    try {
+      const response = await axios.post(`/api/websites/${currentWebsite._id}/category`, {
+        name: categoryName.trim(),
+        description: ''
+      });
+      
+      if (response.status === 201) {
+        // Refresh categories list
+        fetchExistingCategories();
+        // Add the new category to selected categories
+        setFormData(prev => ({
+          ...prev,
+          categories: [...prev.categories, response.data.category._id]
+        }));
+      }
+    } catch (error) {
+      console.error('Error adding new category:', error);
+      alert('Error adding new category');
+    }
+  };
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6 bg-white p-6 rounded-lg shadow-md">
       <div className="grid grid-cols-1 gap-6">
-        {/* Website Selection */}
+        {/* Current Website Display */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Website</label>
-          <select
-            name="website"
-            value={formData.website}
-            onChange={handleChange}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
-            <option value="leledumbo">🐟 LeleDumbo (Catfish)</option>
-            <option value="rumanabastala">🌱 Rumana Bastala (Agriculture)</option>
-          </select>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Current Website</label>
+          <div className="px-3 py-2 bg-gray-100 rounded-md border border-gray-300">
+            <div className="flex items-center space-x-2">
+              {currentWebsite?.logo && (
+                <img 
+                  src={currentWebsite.logo} 
+                  alt={`${currentWebsite.name} logo`}
+                  className="w-6 h-6 object-cover rounded"
+                  onError={(e) => {
+                    e.target.style.display = 'none';
+                  }}
+                />
+              )}
+              <span className="text-sm font-medium text-gray-800">
+                {currentWebsite?.name || 'No website selected'}
+              </span>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Articles will be created for this website
+            </p>
+          </div>
         </div>
 
         {/* Title */}
@@ -356,11 +416,37 @@ const fetchExistingCategories = async () => {
               )}
             </div>
           </div>
+
+          {/* Quick Add Category (Optional) */}
+          <div className="mt-2">
+            <label className="block text-xs text-gray-500 mb-1">Quick Add Category (if needed):</label>
+            <div className="flex space-x-2">
+              <input
+                type="text"
+                id="newCategory"
+                placeholder="New category name"
+                className="flex-1 px-3 py-1 text-sm border border-gray-300 rounded-md"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const input = document.getElementById('newCategory');
+                  if (input.value.trim()) {
+                    handleAddNewCategory(input.value);
+                    input.value = '';
+                  }
+                }}
+                className="px-3 py-1 text-sm bg-green-600 text-white rounded-md hover:bg-green-700"
+              >
+                Add
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Featured Image Upload */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Featured Image</label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Featured Image (Optional)</label>
           <div className="flex space-x-2 mb-2">
             <input
               type="url"
@@ -387,6 +473,16 @@ const fetchExistingCategories = async () => {
                 src={formData.featuredImage} 
                 alt="Featured preview" 
                 className="h-32 object-cover rounded border"
+                onError={(e) => {
+                  console.error('Featured image failed to load:', formData.featuredImage);
+                  e.target.style.display = 'none';
+                  // Show error message
+                  const parent = e.target.parentElement;
+                  const errorMsg = document.createElement('div');
+                  errorMsg.className = 'text-red-500 text-sm';
+                  errorMsg.textContent = 'Image failed to load. Please re-upload.';
+                  parent.appendChild(errorMsg);
+                }}
               />
             </div>
           )}
@@ -398,10 +494,10 @@ const fetchExistingCategories = async () => {
           <AIGenerator onContentGenerated={handleAIContent} />
         </div>
 
-        {/* Rich Text Editor */}
-        <div>
+        {/* Rich Text Editor - FIXED AND WORKING */}
+        <div className="relative">
           <label className="block text-sm font-medium text-gray-700 mb-2">Article Content *</label>
-          <div className="border border-gray-300 rounded-md focus-within:ring-2 focus-within:ring-blue-500">
+          <div className="border border-gray-300 rounded-md focus-within:ring-2 focus-within:ring-blue-500 overflow-hidden">
             <ReactQuill
               ref={editorRef}
               value={formData.content}
@@ -409,14 +505,15 @@ const fetchExistingCategories = async () => {
               modules={modules}
               formats={formats}
               theme="snow"
+              placeholder="Start writing your article content here..."
               style={{ 
                 height: '400px',
                 border: 'none'
               }}
-              className="react-quill-editor"
+              className="react-quill-editor bg-white"
             />
           </div>
-          {(!formData.content.trim() || formData.content === '<p><br></p>') && (
+          {(!formData.content.trim() || formData.content === '<p><br></p>' || formData.content === '<p></p>') && (
             <div className="text-sm text-red-600 mt-1">
               Article content is required
             </div>
@@ -429,41 +526,43 @@ const fetchExistingCategories = async () => {
         </div>
 
         {/* Settings */}
-        <div className="flex items-center space-x-6">
-          <div className="flex items-center">
-            <input
-              type="checkbox"
-              name="isFeatured"
-              checked={formData.isFeatured}
-              onChange={handleChange}
-              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-            />
-            <label className="ml-2 text-sm text-gray-700">Featured Article</label>
-          </div>
-
-          <div className="flex items-center space-x-4">
-            <label className="text-sm text-gray-700">Status:</label>
-            <div className="flex items-center space-x-2">
+        <div className="pt-4 border-t border-gray-200">
+          <div className="flex items-center space-x-6">
+            <div className="flex items-center">
               <input
-                type="radio"
-                name="status"
-                value="draft"
-                checked={formData.status === 'draft'}
+                type="checkbox"
+                name="isFeatured"
+                checked={formData.isFeatured}
                 onChange={handleChange}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
               />
-              <label className="text-sm text-gray-700">Draft</label>
+              <label className="ml-2 text-sm text-gray-700">Featured Article</label>
             </div>
-            <div className="flex items-center space-x-2">
-              <input
-                type="radio"
-                name="status"
-                value="published"
-                checked={formData.status === 'published'}
-                onChange={handleChange}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-              />
-              <label className="text-sm text-gray-700">Published</label>
+
+            <div className="flex items-center space-x-4">
+              <label className="text-sm text-gray-700">Status:</label>
+              <div className="flex items-center space-x-2">
+                <input
+                  type="radio"
+                  name="status"
+                  value="draft"
+                  checked={formData.status === 'draft'}
+                  onChange={handleChange}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                />
+                <label className="text-sm text-gray-700">Draft</label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <input
+                  type="radio"
+                  name="status"
+                  value="published"
+                  checked={formData.status === 'published'}
+                  onChange={handleChange}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                />
+                <label className="text-sm text-gray-700">Published</label>
+              </div>
             </div>
           </div>
         </div>
