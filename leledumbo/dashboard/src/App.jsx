@@ -4,7 +4,8 @@ import { WebsiteProvider } from './contexts/WebsiteContext';
 import DashboardLayout from './components/Layout/DashboardLayout';
 import Dashboard from './pages/Dashboard';
 import Articles from './pages/Articles';
-import ArticleForm from './components/Articles/ArticleForm';
+import CreateArticle from './pages/CreateArticle';
+import EditArticle from './pages/EditArticle';
 import WebsiteSettings from './pages/WebsiteSettings';
 import WebsiteManagement from './pages/WebsiteSettings';
 import AISettings from './pages/AISettings';
@@ -55,8 +56,8 @@ function App() {
             <Routes>
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/articles" element={<Articles />} />
-              <Route path="/articles/create" element={<ArticleForm />} />
-              <Route path="/articles/edit/:id" element={<ArticleForm />} />
+              <Route path="/articles/create" element={<CreateArticle />} />
+              <Route path="/articles/edit/:id" element={<EditArticle />} />
               <Route path="/website-settings" element={<WebsiteSettings />} />
               <Route path="/website-management" element={<WebsiteManagement />} />
               <Route path="/ai-settings" element={<AISettings />} />

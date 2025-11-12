@@ -1,243 +1,336 @@
 import Article from '../models/Article.js';
 import Website from '../models/Website.js';
-import aiService from '../services/aiService.js';
+import Category from '../models/Category.js';
+import mongoose from 'mongoose';
 
-// Get all articles with filters
-const getArticles = async (req, res) => {
+// Create article
+export const createArticle = async (req, res) => {
   try {
-    const { 
-      featured, 
-      status, 
-      category, 
-      limit = 50, 
-      page = 1,
-      sort = '-createdAt',
-      website
-    } = req.query;
-
-    let filter = {};
+    console.log('Creating article with data:', req.body);
     
-    // Handle website filtering - support both ID and name
-    if (website) {
-      // Check if website is an ObjectId format (24 hex characters)
-      const isObjectId = /^[0-9a-fA-F]{24}$/.test(website);
+    const { title, content, categories, featuredImage, status, isFeatured, website } = req.body;
+
+    // Validate required fields
+    if (!title || !content || !categories || !website) {
+      return res.status(400).json({
+        error: 'Missing required fields: title, content, categories, and website are required'
+      });
+    }
+
+    // Find website by name or ID
+    let websiteDoc;
+    if (mongoose.Types.ObjectId.isValid(website)) {
+      websiteDoc = await Website.findById(website);
+    } else {
+      // Try case-insensitive search for website name
+      websiteDoc = await Website.findOne({ 
+        name: { $regex: new RegExp(`^${website}$`, 'i') } 
+      });
+    }
+
+    if (!websiteDoc) {
+      return res.status(404).json({
+        error: `Website not found: ${website}`
+      });
+    }
+
+    console.log('Found website:', websiteDoc.name, 'ID:', websiteDoc._id);
+    console.log('Looking for categories:', categories);
+
+    // FIX: Use websiteId instead of website
+    const validCategories = await Category.find({
+      _id: { $in: categories },
+      websiteId: websiteDoc._id  // CHANGED FROM 'website' TO 'websiteId'
+    });
+
+    console.log('Found valid categories:', validCategories.map(cat => ({id: cat._id, name: cat.name})));
+
+    if (validCategories.length !== categories.length) {
+      const foundIds = validCategories.map(cat => cat._id.toString());
+      const missingIds = categories.filter(id => !foundIds.includes(id));
       
-      if (isObjectId) {
-        // If it's an ObjectId, use it directly
-        filter.website = website;
-      } else {
-        // If it's a name, find the website by name
-        const websiteDoc = await Website.findOne({ 
-          $or: [
-            { name: { $regex: new RegExp(website, 'i') } },
-            { domain: { $regex: new RegExp(website, 'i') } }
-          ]
-        });
-        
-        if (websiteDoc) {
-          filter.website = websiteDoc._id;
-        } else {
-          // If no website found, return empty array
-          return res.json([]);
+      console.log('Missing category IDs:', missingIds);
+      console.log('All categories in database for this website:');
+      const allWebsiteCategories = await Category.find({ websiteId: websiteDoc._id });
+      console.log(allWebsiteCategories.map(cat => ({id: cat._id, name: cat.name})));
+      
+      return res.status(400).json({
+        error: 'One or more categories not found for this website',
+        details: {
+          website: websiteDoc.name,
+          foundCategories: validCategories.length,
+          requestedCategories: categories.length,
+          missingCategoryIds: missingIds,
+          availableCategories: allWebsiteCategories.map(cat => ({id: cat._id, name: cat.name}))
         }
+      });
+    }
+
+    // Create article
+    const article = new Article({
+      title,
+      content,
+      categories,
+      featuredImage: featuredImage || '',
+      status: status || 'draft',
+      isFeatured: isFeatured || false,
+      website: websiteDoc._id
+    });
+
+    const savedArticle = await article.save();
+    
+    // Populate the saved article with category and website details
+    const populatedArticle = await Article.findById(savedArticle._id)
+      .populate('categories', 'name')
+      .populate('website', 'name logo');
+
+    console.log('Article created successfully:', populatedArticle);
+    
+    res.status(201).json(populatedArticle);
+  } catch (error) {
+    console.error('Error creating article:', error);
+    res.status(500).json({
+      error: 'Failed to create article',
+      details: error.message
+    });
+  }
+};
+
+// Get articles with filters
+export const getArticles = async (req, res) => {
+  try {
+    const { website, status, category, featured } = req.query;
+    let filter = {};
+
+    // Filter by website name or ID
+    if (website) {
+      let websiteDoc;
+      if (mongoose.Types.ObjectId.isValid(website)) {
+        websiteDoc = await Website.findById(website);
+      } else {
+        websiteDoc = await Website.findOne({ 
+          name: { $regex: new RegExp(`^${website}$`, 'i') } 
+        });
+      }
+      
+      if (websiteDoc) {
+        filter.website = websiteDoc._id;
       }
     }
-    
-    if (featured !== undefined) filter.isFeatured = featured === 'true';
-    if (status) filter.status = status;
-    if (category) filter.categories = { $in: [new RegExp(category, 'i')] };
+
+    if (status) {
+      filter.status = status;
+    }
+
+    if (category) {
+      filter.categories = category;
+    }
+
+    if (featured !== undefined) {
+      filter.isFeatured = featured === 'true';
+    }
 
     const articles = await Article.find(filter)
-      .populate('website', 'name domain logo') // Populate website data
-      .sort(sort)
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit))
-      .exec();
+      .populate('categories', 'name')
+      .populate('website', 'name logo')
+      .sort({ createdAt: -1 });
 
-    const total = await Article.countDocuments(filter);
-
-    // Return simple array for frontend compatibility
     res.json(articles);
   } catch (error) {
     console.error('Error fetching articles:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({
+      error: 'Failed to fetch articles',
+      details: error.message
+    });
   }
 };
 
 // Get single article
-const getArticle = async (req, res) => {
+export const getArticle = async (req, res) => {
   try {
-    const article = await Article.findById(req.params.id).populate('website', 'name domain logo');
+    const article = await Article.findById(req.params.id)
+      .populate('categories', 'name')
+      .populate('website', 'name logo');
+
     if (!article) {
       return res.status(404).json({ error: 'Article not found' });
     }
+
     res.json(article);
   } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-// Create article
-const createArticle = async (req, res) => {
-  try {
-    // Validate website exists
-    if (req.body.website) {
-      const website = await Website.findById(req.body.website);
-      if (!website) {
-        return res.status(400).json({ error: 'Website not found' });
-      }
-    }
-
-    const article = new Article(req.body);
-    await article.save();
-    
-    // Populate website data in response
-    await article.populate('website', 'name domain logo');
-    
-    res.status(201).json(article);
-  } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error('Error fetching article:', error);
+    res.status(500).json({
+      error: 'Failed to fetch article',
+      details: error.message
+    });
   }
 };
 
 // Update article
-const updateArticle = async (req, res) => {
+export const updateArticle = async (req, res) => {
   try {
-    // Validate website exists if being updated
-    if (req.body.website) {
-      const website = await Website.findById(req.body.website);
-      if (!website) {
-        return res.status(400).json({ error: 'Website not found' });
+    const { title, content, categories, featuredImage, status, isFeatured, website } = req.body;
+
+    // Find website if provided
+    let websiteDoc;
+    if (website) {
+      if (mongoose.Types.ObjectId.isValid(website)) {
+        websiteDoc = await Website.findById(website);
+      } else {
+        websiteDoc = await Website.findOne({ 
+          name: { $regex: new RegExp(`^${website}$`, 'i') } 
+        });
+      }
+
+      if (!websiteDoc) {
+        return res.status(404).json({
+          error: 'Website not found'
+        });
       }
     }
 
+    // Validate categories if provided
+    if (categories && categories.length > 0) {
+      const validCategories = await Category.find({
+        _id: { $in: categories },
+        websiteId: websiteDoc ? websiteDoc._id : undefined
+      });
+
+      if (validCategories.length !== categories.length) {
+        return res.status(400).json({
+          error: 'One or more categories not found'
+        });
+      }
+    }
+
+    const updateData = {
+      ...(title && { title }),
+      ...(content && { content }),
+      ...(categories && { categories }),
+      ...(featuredImage !== undefined && { featuredImage }),
+      ...(status && { status }),
+      ...(isFeatured !== undefined && { isFeatured }),
+      ...(websiteDoc && { website: websiteDoc._id })
+    };
+
     const article = await Article.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      updateData,
       { new: true, runValidators: true }
-    ).populate('website', 'name domain logo');
-    
+    )
+      .populate('categories', 'name')
+      .populate('website', 'name logo');
+
     if (!article) {
       return res.status(404).json({ error: 'Article not found' });
     }
+
     res.json(article);
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error('Error updating article:', error);
+    res.status(500).json({
+      error: 'Failed to update article',
+      details: error.message
+    });
   }
 };
 
 // Delete article
-const deleteArticle = async (req, res) => {
+export const deleteArticle = async (req, res) => {
   try {
     const article = await Article.findByIdAndDelete(req.params.id);
+
     if (!article) {
       return res.status(404).json({ error: 'Article not found' });
     }
+
     res.json({ message: 'Article deleted successfully' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Error deleting article:', error);
+    res.status(500).json({
+      error: 'Failed to delete article',
+      details: error.message
+    });
   }
 };
 
 // Get related articles
-const getRelatedArticles = async (req, res) => {
+export const getRelatedArticles = async (req, res) => {
   try {
-    const currentArticle = await Article.findById(req.params.id);
-    if (!currentArticle) {
+    const article = await Article.findById(req.params.id);
+    
+    if (!article) {
       return res.status(404).json({ error: 'Article not found' });
     }
 
     const relatedArticles = await Article.find({
-      _id: { $ne: currentArticle._id },
-      categories: { $in: currentArticle.categories },
-      status: 'published',
-      website: currentArticle.website
+      _id: { $ne: article._id },
+      website: article.website,
+      categories: { $in: article.categories },
+      status: 'published'
     })
-    .populate('website', 'name domain logo')
-    .limit(6)
-    .sort({ createdAt: -1 })
-    .exec();
+      .populate('categories', 'name')
+      .populate('website', 'name logo')
+      .limit(5)
+      .sort({ createdAt: -1 });
 
     res.json(relatedArticles);
   } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-// Generate AI content
-const generateAIContent = async (req, res) => {
-  try {
-    res.status(503).json({ 
-      error: 'AI features are temporarily disabled',
-      message: 'AI content generation will be available after initial deployment. Please add API keys to enable.'
+    console.error('Error fetching related articles:', error);
+    res.status(500).json({
+      error: 'Failed to fetch related articles',
+      details: error.message
     });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
 };
 
 // Get article categories
-const getArticleCategories = async (req, res) => {
+export const getArticleCategories = async (req, res) => {
   try {
     const { website } = req.query;
     
     let filter = {};
     if (website) {
-      // Handle both website ID and name
-      const isObjectId = /^[0-9a-fA-F]{24}$/.test(website);
-      
-      if (isObjectId) {
-        filter.website = website;
+      let websiteDoc;
+      if (mongoose.Types.ObjectId.isValid(website)) {
+        websiteDoc = await Website.findById(website);
       } else {
-        const websiteDoc = await Website.findOne({ 
-          $or: [
-            { name: { $regex: new RegExp(website, 'i') } },
-            { domain: { $regex: new RegExp(website, 'i') } }
-          ]
+        websiteDoc = await Website.findOne({ 
+          name: { $regex: new RegExp(`^${website}$`, 'i') } 
         });
-        
-        if (websiteDoc) {
-          filter.website = websiteDoc._id;
-        }
+      }
+      
+      if (websiteDoc) {
+        filter.websiteId = websiteDoc._id; // CHANGED TO websiteId
       }
     }
 
-    const articles = await Article.find(filter);
-    
-    // Extract and count unique categories
-    const categoryCount = {};
-    articles.forEach(article => {
-      article.categories.forEach(category => {
-        categoryCount[category] = (categoryCount[category] || 0) + 1;
-      });
-    });
-
-    // Sort by count descending
-    const categories = Object.entries(categoryCount)
-      .sort(([,a], [,b]) => b - a)
-      .map(([category]) => category);
-
-    res.json({
-      success: true,
-      categories
-    });
+    const categories = await Category.find(filter).sort({ name: 1 });
+    res.json(categories);
   } catch (error) {
-    console.error('Error fetching categories:', error);
+    console.error('Error fetching article categories:', error);
     res.status(500).json({
-      success: false,
-      error: 'Failed to fetch categories'
+      error: 'Failed to fetch categories',
+      details: error.message
     });
   }
 };
 
-// Export all functions
-export {
-  getArticles,
-  getArticle,
-  createArticle,
-  updateArticle,
-  deleteArticle,
-  getRelatedArticles,
-  generateAIContent,
-  getArticleCategories
+// AI content generation (placeholder)
+export const generateAIContent = async (req, res) => {
+  try {
+    const { prompt, type } = req.body;
+    
+    // Placeholder for AI content generation
+    // You can integrate with OpenAI, DeepSeek, Gemini, etc.
+    const generatedContent = `<p>This is AI-generated content based on your prompt: "${prompt}"</p><p>You can integrate with your preferred AI service to generate actual content.</p>`;
+    
+    res.json({ content: generatedContent });
+  } catch (error) {
+    console.error('Error generating AI content:', error);
+    res.status(500).json({
+      error: 'Failed to generate AI content',
+      details: error.message
+    });
+  }
 };

@@ -11,7 +11,8 @@ const articleSchema = new mongoose.Schema({
     required: true
   },
   categories: [{
-    type: String,
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Category',
     required: true
   }],
   featuredImage: {

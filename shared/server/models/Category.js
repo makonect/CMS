@@ -8,21 +8,15 @@ const categorySchema = new mongoose.Schema({
   },
   description: {
     type: String,
-    trim: true
+    default: ''
   },
   websiteId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Website',
     required: true
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
   }
+}, {
+  timestamps: true
 });
 
 export default mongoose.model('Category', categorySchema);

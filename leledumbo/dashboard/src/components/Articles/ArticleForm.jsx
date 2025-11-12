@@ -4,123 +4,73 @@ import 'react-quill/dist/quill.snow.css';
 import axios from 'axios';
 import AIGenerator from '../AI/AIGenerator';
 import { useWebsite } from '../../contexts/WebsiteContext';
+import { useNavigate } from 'react-router-dom';
 
 const ArticleForm = ({ onSubmit, loading, initialData }) => {
   const { currentWebsite } = useWebsite();
-  const [formData, setFormData] = useState(initialData || {
+  const navigate = useNavigate();
+
+  const [formData, setFormData] = useState({
     title: '',
     content: '',
     categories: [],
     featuredImage: '',
     status: 'draft',
     isFeatured: false,
-    website: currentWebsite?.name || 'leledumbo'
+    website: currentWebsite?._id || '',
+    ...initialData
   });
 
   const [existingCategories, setExistingCategories] = useState([]);
-  const [uploading, setUploading] = useState(false);
   const [categoryLoading, setCategoryLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef(null);
-  const editorRef = useRef(null);
+  const quillRef = useRef(null);
 
-  // Enhanced Quill editor modules with proper image handling
+  // Simple Quill configuration without custom image handler
   const modules = {
-    toolbar: {
-      container: [
-        [{ 'header': [1, 2, 3, false] }],
-        ['bold', 'italic', 'underline', 'strike'],
-        [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-        ['blockquote', 'code-block'],
-        ['link', 'image'],
-        [{ 'align': [] }],
-        [{ 'color': [] }, { 'background': [] }],
-        ['clean']
-      ],
-      handlers: {
-        image: imageHandler
-      }
-    },
-    clipboard: {
-      matchVisual: false,
-    }
+    toolbar: [
+      ['bold', 'italic', 'underline'],
+      [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+      ['link', 'image'],
+      ['clean']
+    ],
   };
 
   const formats = [
-    'header',
-    'bold', 'italic', 'underline', 'strike',
+    'bold', 'italic', 'underline',
     'list', 'bullet',
-    'blockquote', 'code-block',
-    'link', 'image',
-    'align',
-    'color', 'background'
+    'link', 'image'
   ];
-
-  // Image handler for Quill editor
-  function imageHandler() {
-    const input = document.createElement('input');
-    input.setAttribute('type', 'file');
-    input.setAttribute('accept', 'image/*');
-    input.click();
-
-    input.onchange = async () => {
-      const file = input.files[0];
-      if (file) {
-        await uploadImageToEditor(file);
-      }
-    };
-  }
-
-  const uploadImageToEditor = async (file) => {
-    if (!file.type.match('image.*')) {
-      alert('Only images are allowed');
-      return;
-    }
-
-    if (file.size > 5 * 1024 * 1024) {
-      alert('Image size must be less than 5MB');
-      return;
-    }
-
-    setUploading(true);
-    try {
-      const uploadFormData = new FormData();
-      uploadFormData.append('image', file);
-
-      const response = await axios.post('/api/upload/image', uploadFormData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-
-      if (response.data.success) {
-        const imageUrl = response.data.images.original;
-        // Fix the URL if it's relative
-        const fullImageUrl = imageUrl.startsWith('http') ? imageUrl : `http://localhost:3001${imageUrl}`;
-        
-        const quill = editorRef.current?.getEditor();
-        const range = quill?.getSelection();
-        if (range) {
-          quill.insertEmbed(range.index, 'image', fullImageUrl);
-        }
-      }
-    } catch (error) {
-      console.error('Error uploading image:', error);
-      alert('Error uploading image. Please try again.');
-    } finally {
-      setUploading(false);
-    }
-  };
 
   // Update form data when currentWebsite changes
   useEffect(() => {
     if (currentWebsite) {
       setFormData(prev => ({
         ...prev,
-        website: currentWebsite.name
+        website: currentWebsite._id // CHANGE: Use ID instead of name
       }));
       fetchExistingCategories();
     }
   }, [currentWebsite]);
+
+  // Fix categories when initialData changes (for edit mode)
+  useEffect(() => {
+    if (initialData && initialData.categories) {
+      // Convert category objects to IDs if needed
+      const fixedCategories = initialData.categories.map(cat => {
+        if (typeof cat === 'object' && cat._id) {
+          return cat._id;
+        }
+        return cat;
+      });
+      
+      setFormData(prev => ({
+        ...prev,
+        categories: fixedCategories
+      }));
+    }
+  }, [initialData]);
 
   // Fetch categories for the current website
   const fetchExistingCategories = async () => {
@@ -128,58 +78,98 @@ const ArticleForm = ({ onSubmit, loading, initialData }) => {
     
     setCategoryLoading(true);
     try {
-      console.log('🔄 Fetching categories for website:', currentWebsite.name);
-      
-      // Use the websites API to get categories for the current website
+      console.log('Fetching categories for website:', currentWebsite._id);
       const response = await axios.get(`/api/websites/${currentWebsite._id}/categories`);
       
-      console.log('📦 Categories API Response:', {
-        status: response.status,
-        data: response.data,
-        count: response.data?.categories?.length || 0
-      });
+      console.log('Categories API response:', response.data);
       
       if (response.data && response.data.categories && Array.isArray(response.data.categories)) {
-        console.log('✅ Setting categories:', response.data.categories.length);
         setExistingCategories(response.data.categories);
+        console.log('Categories loaded:', response.data.categories);
       } else {
-        console.error('❌ Unexpected response format:', response.data);
-        const fallbackCategories = getDefaultCategories(currentWebsite.name);
-        console.log('🔄 Using fallback categories:', fallbackCategories);
-        setExistingCategories(fallbackCategories);
+        console.log('No categories found, using fallback');
+        // Try alternative API endpoint
+        try {
+          const altResponse = await axios.get(`/api/categories?website=${currentWebsite._id}`);
+          if (altResponse.data && Array.isArray(altResponse.data)) {
+            setExistingCategories(altResponse.data);
+            console.log('Categories loaded from alternative endpoint:', altResponse.data);
+          } else {
+            // Create default categories if none exist
+            await createDefaultCategories();
+          }
+        } catch (altError) {
+          console.error('Alternative categories fetch failed:', altError);
+          // Create default categories if none exist
+          await createDefaultCategories();
+        }
       }
     } catch (error) {
-      console.error('💥 Error fetching categories from API:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status
-      });
-      
-      const fallbackCategories = getDefaultCategories(currentWebsite.name);
-      console.log('🔄 Using error fallback categories:', fallbackCategories);
-      setExistingCategories(fallbackCategories);
+      console.error('Error fetching categories:', error);
+      // Create default categories if none exist
+      await createDefaultCategories();
     } finally {
       setCategoryLoading(false);
     }
   };
 
-  // Default categories fallback
+  // Create default categories for the website
+  const createDefaultCategories = async () => {
+    if (!currentWebsite) return;
+    
+    const defaultCategories = getDefaultCategories(currentWebsite.name);
+    
+    try {
+      console.log('Creating default categories for:', currentWebsite.name);
+      
+      // Create categories one by one
+      const createdCategories = [];
+      for (const category of defaultCategories) {
+        try {
+          const response = await axios.post(`/api/websites/${currentWebsite._id}/category`, {
+            name: category.name,
+            description: `Default ${category.name} category`
+          });
+          if (response.data && response.data.category) {
+            createdCategories.push(response.data.category);
+          }
+        } catch (catError) {
+          console.error(`Error creating category ${category.name}:`, catError);
+        }
+      }
+      
+      if (createdCategories.length > 0) {
+        setExistingCategories(createdCategories);
+        console.log('Default categories created:', createdCategories);
+      } else {
+        // If we can't create categories, use the fallback ones
+        setExistingCategories(defaultCategories);
+        console.log('Using fallback categories:', defaultCategories);
+      }
+    } catch (error) {
+      console.error('Error creating default categories:', error);
+      // Use fallback categories as last resort
+      setExistingCategories(defaultCategories);
+    }
+  };
+
+  // Default categories fallback (with proper structure)
   const getDefaultCategories = (website) => {
     if (website === 'leledumbo') {
       return [
-        { _id: 'cat-leledumbo-1', name: 'Budidaya Lele' },
-        { _id: 'cat-leledumbo-2', name: 'Pakan Ikan' },
-        { _id: 'cat-leledumbo-3', name: 'Kolam Lele' },
-        { _id: 'cat-leledumbo-4', name: 'Penyakit Ikan' },
-        { _id: 'cat-leledumbo-5', name: 'Bisnis Lele' }
+        { _id: 'default-leledumbo-1', name: 'Budidaya Lele' },
+        { _id: 'default-leledumbo-2', name: 'Pakan Ikan' },
+        { _id: 'default-leledumbo-3', name: 'Kolam Lele' },
+        { _id: 'default-leledumbo-4', name: 'Penyakit Ikan' },
+        { _id: 'default-leledumbo-5', name: 'Bisnis Lele' }
       ];
     } else {
       return [
-        { _id: 'cat-rumanabastala-1', name: 'Pertanian Organik' },
-        { _id: 'cat-rumanabastala-2', name: 'Budidaya Tanaman' },
-        { _id: 'cat-rumanabastala-3', name: 'Pupuk Alami' },
-        { _id: 'cat-rumanabastala-4', name: 'Hama Tanaman' },
-        { _id: 'cat-rumanabastala-5', name: 'Teknologi Pertanian' }
+        { _id: 'default-rumanabastala-1', name: 'Pertanian Organik' },
+        { _id: 'default-rumanabastala-2', name: 'Budidaya Tanaman' },
+        { _id: 'default-rumanabastala-3', name: 'Pupuk Alami' },
+        { _id: 'default-rumanabastala-4', name: 'Hama Tanaman' },
+        { _id: 'default-rumanabastala-5', name: 'Teknologi Pertanian' }
       ];
     }
   };
@@ -188,7 +178,6 @@ const ArticleForm = ({ onSubmit, loading, initialData }) => {
     const { name, value, type, checked } = e.target;
     
     if (name === 'categories') {
-      // Handle multiple select for categories
       const selectedOptions = Array.from(e.target.selectedOptions, option => option.value);
       setFormData(prev => ({
         ...prev,
@@ -203,7 +192,6 @@ const ArticleForm = ({ onSubmit, loading, initialData }) => {
   };
 
   const handleContentChange = (content) => {
-    console.log('Content changed:', content);
     setFormData(prev => ({ ...prev, content }));
   };
 
@@ -266,7 +254,13 @@ const ArticleForm = ({ onSubmit, loading, initialData }) => {
   const handleSubmit = (e) => {
     e.preventDefault();
     
-    // Validation
+    // Check if onSubmit is a function
+    if (typeof onSubmit !== 'function') {
+      console.error('onSubmit is not a function:', onSubmit);
+      alert('Form submission error: onSubmit function not available');
+      return;
+    }
+    
     if (!formData.title.trim()) {
       alert('Please enter a title');
       return;
@@ -283,19 +277,34 @@ const ArticleForm = ({ onSubmit, loading, initialData }) => {
       return;
     }
     
-    // Submit the form data - featuredImage is optional
+    console.log('Submitting form data:', formData);
+    console.log('Selected categories:', formData.categories);
+    console.log('Available categories:', existingCategories);
+    
     onSubmit(formData);
   };
 
   const handleAIContent = (content) => {
-    console.log('AI Content received:', content);
     setFormData(prev => ({ ...prev, content }));
   };
 
   // Get category name by ID for display
   const getCategoryName = (categoryId) => {
+    // Handle case where categoryId might be an object
+    if (typeof categoryId === 'object' && categoryId._id) {
+      return categoryId.name || `Unknown (${categoryId._id})`;
+    }
+    
     const category = existingCategories.find(cat => cat._id === categoryId);
-    return category ? category.name : 'Unknown Category';
+    return category ? category.name : `Unknown (${categoryId})`;
+  };
+
+  // Get clean category ID (in case it's an object)
+  const getCleanCategoryId = (categoryId) => {
+    if (typeof categoryId === 'object' && categoryId._id) {
+      return categoryId._id;
+    }
+    return categoryId;
   };
 
   // Add a new category on the fly
@@ -323,6 +332,15 @@ const ArticleForm = ({ onSubmit, loading, initialData }) => {
     }
   };
 
+  // If no current website, show message
+  if (!currentWebsite) {
+    return (
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
+        <p className="text-yellow-700">Please select a website first to create an article.</p>
+      </div>
+    );
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6 bg-white p-6 rounded-lg shadow-md">
       <div className="grid grid-cols-1 gap-6">
@@ -336,18 +354,13 @@ const ArticleForm = ({ onSubmit, loading, initialData }) => {
                   src={currentWebsite.logo} 
                   alt={`${currentWebsite.name} logo`}
                   className="w-6 h-6 object-cover rounded"
-                  onError={(e) => {
-                    e.target.style.display = 'none';
-                  }}
+                  onError={(e) => e.target.style.display = 'none'}
                 />
               )}
               <span className="text-sm font-medium text-gray-800">
                 {currentWebsite?.name || 'No website selected'}
               </span>
             </div>
-            <p className="text-xs text-gray-500 mt-1">
-              Articles will be created for this website
-            </p>
           </div>
         </div>
 
@@ -365,57 +378,65 @@ const ArticleForm = ({ onSubmit, loading, initialData }) => {
           />
         </div>
 
-        {/* Categories - Multiple Select Dropdown */}
+        {/* Categories */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Categories *
-            {categoryLoading && <span className="ml-2 text-sm text-gray-500">Loading categories...</span>}
+            {categoryLoading && <span className="ml-2 text-sm text-gray-500">Loading...</span>}
           </label>
           
-          {/* Multiple Select Dropdown */}
-          <div className="mb-3">
-            <select
-              name="categories"
-              multiple
-              value={formData.categories}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent h-32"
-              size="5"
-            >
-              {existingCategories.map(category => (
-                <option key={category._id} value={category._id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-            <div className="text-xs text-gray-500 mt-1">
-              Hold Ctrl (or Cmd on Mac) to select multiple categories
+          {existingCategories.length === 0 && !categoryLoading ? (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4 mb-3">
+              <p className="text-yellow-700 text-sm">
+                No categories found for this website. Please add categories first or try refreshing the page.
+              </p>
             </div>
-          </div>
-          
-          {/* Selected Categories Display */}
-          <div className="mb-3">
-            <div className="text-sm text-gray-600 mb-2">
-              Selected categories: {formData.categories.length}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {formData.categories.map(categoryId => (
-                <span key={categoryId} className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
-                  {getCategoryName(categoryId)}
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveCategory(categoryId)}
-                    className="ml-2 text-blue-600 hover:text-blue-800 font-bold"
-                  >
-                    &times;
-                  </button>
-                </span>
-              ))}
-              {formData.categories.length === 0 && (
-                <span className="text-sm text-gray-500">No categories selected</span>
-              )}
-            </div>
-          </div>
+          ) : (
+            <>
+              <div className="mb-3">
+                <select
+                  name="categories"
+                  multiple
+                  value={formData.categories.map(cat => getCleanCategoryId(cat))}
+                  onChange={handleChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent h-32"
+                  size="5"
+                >
+                  {existingCategories.map(category => (
+                    <option key={category._id} value={category._id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="text-xs text-gray-500 mt-1">
+                  Hold Ctrl (or Cmd on Mac) to select multiple categories
+                </div>
+              </div>
+              
+              <div className="mb-3">
+                <div className="text-sm text-gray-600 mb-2">
+                  Selected categories: {formData.categories.length}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {formData.categories.map(categoryId => (
+                    <span key={getCleanCategoryId(categoryId)} className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
+                      {getCategoryName(categoryId)}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCategory(getCleanCategoryId(categoryId))}
+                        className="ml-2 text-blue-600 hover:text-blue-800 font-bold"
+                      >
+                        &times;
+                      </button>
+                    </span>
+                  ))}
+                  {formData.categories.length === 0 && (
+                    <span className="text-sm text-gray-500">No categories selected</span>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Quick Add Category (Optional) */}
           <div className="mt-2">
@@ -494,35 +515,26 @@ const ArticleForm = ({ onSubmit, loading, initialData }) => {
           <AIGenerator onContentGenerated={handleAIContent} />
         </div>
 
-        {/* Rich Text Editor - FIXED AND WORKING */}
-        <div className="relative">
+        {/* Rich Text Editor */}
+        <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Article Content *</label>
-          <div className="border border-gray-300 rounded-md focus-within:ring-2 focus-within:ring-blue-500 overflow-hidden">
+          <div className="border border-gray-300 rounded-lg overflow-hidden">
             <ReactQuill
-              ref={editorRef}
               value={formData.content}
               onChange={handleContentChange}
               modules={modules}
               formats={formats}
               theme="snow"
-              placeholder="Start writing your article content here..."
+              placeholder="Start writing your article here..."
               style={{ 
-                height: '400px',
+                height: '300px',
                 border: 'none'
               }}
-              className="react-quill-editor bg-white"
             />
           </div>
-          {(!formData.content.trim() || formData.content === '<p><br></p>' || formData.content === '<p></p>') && (
-            <div className="text-sm text-red-600 mt-1">
-              Article content is required
-            </div>
-          )}
-          {uploading && (
-            <div className="mt-2 text-sm text-blue-600">
-              Uploading image...
-            </div>
-          )}
+          <div className="text-xs text-gray-500 mt-1">
+            Use the toolbar to format your text. For images, upload them as featured image above or use image URLs.
+          </div>
         </div>
 
         {/* Settings */}
@@ -572,16 +584,17 @@ const ArticleForm = ({ onSubmit, loading, initialData }) => {
       <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200">
         <button
           type="button"
+          onClick={() => navigate('/articles')}
           className="px-6 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
         >
           Cancel
         </button>
         <button
           type="submit"
-          disabled={loading || uploading}
+          disabled={loading || uploading || existingCategories.length === 0}
           className="px-6 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {loading ? 'Saving...' : 'Save Article'}
+          {loading ? 'Saving...' : initialData ? 'Update Article' : 'Save Article'}
         </button>
       </div>
     </form>

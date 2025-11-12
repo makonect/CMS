@@ -8,6 +8,21 @@ const ArticleTable = ({ articles, onDelete }) => {
     }
   };
 
+  // Helper function to get category names
+  const getCategoryNames = (categories) => {
+    if (!categories || !Array.isArray(categories)) {
+      return 'Uncategorized';
+    }
+    
+    // If categories are objects, extract names
+    if (categories.length > 0 && typeof categories[0] === 'object') {
+      return categories.map(cat => cat.name).join(', ');
+    }
+    
+    // If categories are already strings/IDs, return as is
+    return categories.join(', ');
+  };
+
   if (!articles || articles.length === 0) {
     return (
       <div className="text-center py-12 bg-white rounded-lg shadow-md">
@@ -52,14 +67,31 @@ const ArticleTable = ({ articles, onDelete }) => {
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <div className="flex flex-wrap gap-1">
-                    {article.categories.map(category => (
-                      <span 
-                        key={category}
-                        className="inline-flex px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full"
-                      >
-                        {category}
-                      </span>
-                    ))}
+                    {article.categories && Array.isArray(article.categories) && article.categories.length > 0 ? (
+                      // If categories are objects with name property
+                      article.categories[0] && typeof article.categories[0] === 'object' ? (
+                        article.categories.map(category => (
+                          <span 
+                            key={category._id || category.name}
+                            className="inline-flex px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full"
+                          >
+                            {category.name}
+                          </span>
+                        ))
+                      ) : (
+                        // If categories are strings/IDs
+                        article.categories.map((category, index) => (
+                          <span 
+                            key={index}
+                            className="inline-flex px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full"
+                          >
+                            {category}
+                          </span>
+                        ))
+                      )
+                    ) : (
+                      <span className="text-sm text-gray-500">Uncategorized</span>
+                    )}
                   </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
